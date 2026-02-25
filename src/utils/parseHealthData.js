@@ -1,42 +1,39 @@
 /**
- * Parses Apple Health export.xml using a Web Worker + regex extraction.
- * Only pulls HKQuantityTypeIdentifierBodyMass records from the raw text,
- * so even 200+ MB files won't crash the browser.
+ * Parses Apple Health export.xml using a Web Worker that streams through the
+ * file in ~48 MB chunks. Only pulls HKQuantityTypeIdentifierBodyMass records,
+ * so even multi-GB exports won't crash the browser.
  *
  * Returns a promise that resolves to sorted, deduplicated weight records.
  */
 
 import ParseWorker from './parseWorker.js?worker';
 
-export function parseAppleHealthXML(file) {
+export function parseAppleHealthXML(file, onProgress) {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
+    const worker = new ParseWorker();
 
-    reader.onload = () => {
-      const worker = new ParseWorker();
-
-      worker.onmessage = (e) => {
-        worker.terminate();
-        if (e.data.type === 'result') {
-          resolve(e.data.data);
-        } else {
-          reject(new Error(e.data.message));
+    worker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === 'progress') {
+        if (typeof onProgress === 'function') {
+          onProgress(msg.percent);
         }
-      };
-
-      worker.onerror = (err) => {
+      } else if (msg.type === 'result') {
         worker.terminate();
-        reject(new Error(err.message || 'Worker failed'));
-      };
-
-      // Send raw text to the worker
-      worker.postMessage(reader.result);
+        resolve(msg.data);
+      } else if (msg.type === 'error') {
+        worker.terminate();
+        reject(new Error(msg.message));
+      }
     };
 
-    reader.onerror = () => reject(new Error('Failed to read file'));
+    worker.onerror = (err) => {
+      worker.terminate();
+      reject(new Error(err.message || 'Worker failed'));
+    };
 
-    // Read as text — the string itself is fine in memory,
-    // it's full XML->object parsing that causes OOM.
-    reader.readAsText(file);
+    // Send the File object directly — it's transferred by reference (no copy),
+    // and the worker reads it in chunks using FileReaderSync.
+    worker.postMessage({ type: 'parse', file });
   });
 }
