@@ -4,6 +4,7 @@ import { parseAppleHealthXML } from '../utils/parseHealthData';
 export default function DataImporter({ onDataLoaded, hasData }) {
   const [dragOver, setDragOver] = useState(false);
   const [parsing, setParsing] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
   const [recordCount, setRecordCount] = useState(0);
   const fileInputRef = useRef(null);
@@ -14,12 +15,12 @@ export default function DataImporter({ onDataLoaded, hasData }) {
 
       setError(null);
       setParsing(true);
+      setProgress(0);
 
       try {
-        // Pass the File object directly — parsing now runs in a Web Worker
-        // using regex extraction instead of full XML parsing, so large
-        // exports (200+ MB) won't OOM the browser.
-        const records = await parseAppleHealthXML(file);
+        const records = await parseAppleHealthXML(file, (percent) => {
+          setProgress(percent);
+        });
 
         if (records.length === 0) {
           setError(
@@ -98,7 +99,27 @@ export default function DataImporter({ onDataLoaded, hasData }) {
               className="mono text-sm mb-2"
               style={{ color: 'var(--accent-blue)' }}
             >
-              Parsing...
+              Parsing… {progress}%
+            </div>
+            <div
+              style={{
+                width: '80%',
+                height: '4px',
+                background: 'var(--border-subtle)',
+                borderRadius: '2px',
+                margin: '8px auto',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  width: `${progress}%`,
+                  height: '100%',
+                  background: 'var(--accent-blue)',
+                  borderRadius: '2px',
+                  transition: 'width 0.3s ease',
+                }}
+              />
             </div>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
               Processing Apple Health export
