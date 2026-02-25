@@ -1,56 +1,42 @@
-import { XMLParser } from 'fast-xml-parser';
+/**
+ * Parses Apple Health export.xml using a Web Worker + regex extraction.
+ * Only pulls HKQuantityTypeIdentifierBodyMass records from the raw text,
+ * so even 200+ MB files won't crash the browser.
+ *
+ * Returns a promise that resolves to sorted, deduplicated weight records.
+ */
 
-export function parseAppleHealthXML(xmlString) {
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-  });
+import ParseWorker from './parseWorker.js?worker';
 
-  const parsed = parser.parse(xmlString);
+export function parseAppleHealthXML(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
 
-  const healthData = parsed?.HealthData;
-  if (!healthData) return [];
+    reader.onload = () => {
+      const worker = new ParseWorker();
 
-  let records = healthData.Record;
-  if (!records) return [];
-  if (!Array.isArray(records)) records = [records];
-
-  const weightRecords = records
-    .filter((r) => r['@_type'] === 'HKQuantityTypeIdentifierBodyMass')
-    .map((r) => {
-      const dateStr = r['@_startDate'] || r['@_creationDate'];
-      const value = parseFloat(r['@_value']);
-      const unit = r['@_unit'] || 'lb';
-
-      let weightLbs = value;
-      if (unit === 'kg') {
-        weightLbs = value * 2.20462;
-      }
-
-      const date = new Date(dateStr);
-      return {
-        date: date.toISOString().split('T')[0],
-        timestamp: date.getTime(),
-        weight: Math.round(weightLbs * 10) / 10,
+      worker.onmessage = (e) => {
+        worker.terminate();
+        if (e.data.type === 'result') {
+          resolve(e.data.data);
+        } else {
+          reject(new Error(e.data.message));
+        }
       };
-    })
-    .filter((r) => !isNaN(r.weight) && !isNaN(r.timestamp));
 
-  // Deduplicate by date — keep the average for each day
-  const byDate = {};
-  for (const r of weightRecords) {
-    if (!byDate[r.date]) {
-      byDate[r.date] = { sum: 0, count: 0, timestamp: r.timestamp };
-    }
-    byDate[r.date].sum += r.weight;
-    byDate[r.date].count += 1;
-  }
+      worker.onerror = (err) => {
+        worker.terminate();
+        reject(new Error(err.message || 'Worker failed'));
+      };
 
-  return Object.entries(byDate)
-    .map(([date, { sum, count, timestamp }]) => ({
-      date,
-      timestamp,
-      weight: Math.round((sum / count) * 10) / 10,
-    }))
-    .sort((a, b) => a.timestamp - b.timestamp);
+      // Send raw text to the worker
+      worker.postMessage(reader.result);
+    };
+
+    reader.onerror = () => reject(new Error('Failed to read file'));
+
+    // Read as text — the string itself is fine in memory,
+    // it's full XML->object parsing that causes OOM.
+    reader.readAsText(file);
+  });
 }

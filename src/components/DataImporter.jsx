@@ -16,8 +16,10 @@ export default function DataImporter({ onDataLoaded, hasData }) {
       setParsing(true);
 
       try {
-        const text = await file.text();
-        const records = parseAppleHealthXML(text);
+        // Pass the File object directly — parsing now runs in a Web Worker
+        // using regex extraction instead of full XML parsing, so large
+        // exports (200+ MB) won't OOM the browser.
+        const records = await parseAppleHealthXML(file);
 
         if (records.length === 0) {
           setError(
